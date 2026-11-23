@@ -2,7 +2,7 @@ fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 httpx>=0.27,<1.0
 firebase-admin>=6.5,<8.0
-# Render's default Python start command is "gunicorn your_application.wsgi";
-# these two let that default serve the ASGI app without any dashboard change.
+# Render's default Python start command is "gunicorn your_application.wsgi".
+# gunicorn + its uvicorn worker serve the ASGI (FastAPI) app from that default.
 gunicorn>=21,<24
-a2wsgi>=1.10,<2.0
+uvicorn-worker>=0.3,<1.0
