@@ -44,13 +44,10 @@ from . import (
     vtu,
     wallet,
 )
-from .catalogue import CATALOGUE
 from .firebase import FirebaseUnavailable
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("nationsub")
-
-CABLE_PROVIDERS = {"dstv", "gotv", "startimes", "showmax"}
 
 # Only these VTU services may be reached through the proxy.
 ALLOWED_SERVICES = {
@@ -710,6 +707,17 @@ def providers(service: str | None = None):
             200, {"ok": True, "service": "cable", "source": source, "providers": rows}
         )
 
+    if kind in ("network", "networks"):
+        _, source = provider_catalogue.plans()
+        rows = provider_catalogue.networks()
+        if not rows:
+            return send_json(
+                502, {"ok": False, "message": "The data catalogue is not available right now."}
+            )
+        return send_json(
+            200, {"ok": True, "service": "network", "source": source, "providers": rows}
+        )
+
     if kind in ("bank", "banks"):
         rows, source = provider_services.banks()
         if not rows:
@@ -728,7 +736,8 @@ def providers(service: str | None = None):
 @app.get("/cable-plans")
 def cable_plans(provider: str | None = None):
     provider_id = (provider or "").lower()
-    if provider_id not in CABLE_PROVIDERS:
+    available, _ = provider_services.cable_providers()
+    if provider_id not in {row["id"] for row in available}:
         return send_json(400, {"ok": False, "message": "Unknown cable provider."})
 
     catalogue = vtu.fetch_cable_plans(provider_id)
@@ -776,7 +785,8 @@ def plans(network: str | None = None):
             "networks": [
                 {
                     "id": network_id,
-                    "label": CATALOGUE.get(network_id, {}).get("label") or network_id.upper(),
+                    "label": provider_catalogue.NETWORK_LABELS.get(network_id)
+                    or network_id.upper(),
                     "plans": vtu.with_customer_prices("data", network_plans),
                 }
                 for network_id, network_plans in catalogue.items()

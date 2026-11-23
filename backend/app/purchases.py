@@ -14,7 +14,6 @@ from __future__ import annotations
 import math
 
 from . import pricing
-from .catalogue import CATALOGUE, plans_for
 
 # Gateway service -> the fee key used by pricing.py
 FEE_KEY = {
@@ -26,17 +25,6 @@ FEE_KEY = {
     "sendmoney": "sendmoney",
     "airtime-pin": "airtime-pin",
 }
-
-# service|plan-code -> catalogue plan, built once per process.
-_PLAN_INDEX: dict[str, dict] = {}
-for _network in CATALOGUE:
-    for _plan in plans_for(_network) or []:
-        _PLAN_INDEX[f"{_plan.get('service')}|{_plan.get('code')}"] = _plan
-
-
-def catalogue_plan(service, code) -> dict | None:
-    return _PLAN_INDEX.get(f"{str(service or '').strip()}|{str(code or '').strip()}")
-
 
 def _positive(value) -> float | None:
     try:
@@ -55,7 +43,8 @@ def describe(service, params=None, cable_plans=None, data_plan=None) -> dict:
     wallet, so they are skipped rather than priced.
 
     `data_plan` is the live plan row the caller resolved from the provider
-    catalogue; without it the bundled snapshot is used.
+    catalogue. Without it a data purchase cannot be priced, so it is refused
+    rather than guessed.
     """
     params = params or {}
     fee_key = FEE_KEY.get(str(service or "").lower())
@@ -67,7 +56,7 @@ def describe(service, params=None, cable_plans=None, data_plan=None) -> dict:
     size_mb = None
 
     if fee_key == "data":
-        plan = data_plan or catalogue_plan(params.get("service"), params.get("DataPlan"))
+        plan = data_plan
         if not plan:
             return {"error": "That data plan is not available right now."}
         provider_amount = _positive(plan.get("price"))

@@ -14,6 +14,7 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
 | GET | `/providers?service=electricity` | billers from VTU's published table |
 | GET | `/providers?service=cable` | providers VTU actually returns packages for |
 | GET | `/providers?service=bank` | Flutterwave's live bank list |
+| GET | `/providers?service=network` | networks that currently have plans |
 | ANY | `/vtu/<service>` | authenticated proxy to VTU Africa |
 | GET | `/wallet` | balance and recent entries |
 | POST | `/wallet/topup` | Flutterwave virtual account for a top-up |
@@ -40,9 +41,10 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
 - **Banks** — Flutterwave's `/banks/NG`, i.e. the same codes transfers are
   resolved and paid against.
 - **Service charges** — `app/pricing.py`. The app never sends a price.
-- **Fallback** — if the table cannot be fetched, `app/catalogue_data.py`
-  (a snapshot generated from the Firebase catalogue) keeps the app working.
-  Regenerate it with `node tools/sync_catalogue.js`.
+- **Fallback** — nothing is bundled. The last good read from VTU is stored in
+  Firestore (`catalogue/data-plans`) and served as `source: "cache"` only while
+  the provider page is briefly unreachable, so every price still originates
+  from VTU instead of a table shipped inside the code.
 
 `/plans` reports `source: "provider"` when the prices are live and
 `source: "snapshot"` when the fallback was used.

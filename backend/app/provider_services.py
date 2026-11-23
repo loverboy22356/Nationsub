@@ -41,14 +41,6 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
 
-# Display names only: the ids and their availability come from the provider.
-CABLE_LABELS = {
-    "dstv": "DStv",
-    "gotv": "GOtv",
-    "startimes": "StarTimes",
-    "showmax": "Showmax",
-}
-
 _TABLE = re.compile(r"<table.*?</table>", re.S | re.I)
 _ROW = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S | re.I)
 _CELL = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S | re.I)
@@ -158,7 +150,7 @@ def cable_candidates() -> list[str]:
         name = name.lower()
         if name not in found:
             found.append(name)
-    return found or list(CABLE_LABELS)
+    return found
 
 
 def cable_providers() -> tuple[list[dict], str]:
@@ -176,7 +168,7 @@ def cable_providers() -> tuple[list[dict], str]:
         providers.append(
             {
                 "id": provider,
-                "label": CABLE_LABELS.get(provider, provider.upper()),
+                "label": provider.capitalize(),
                 "packages": len(plans),
             }
         )

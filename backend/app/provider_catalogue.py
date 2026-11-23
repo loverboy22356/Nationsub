@@ -13,8 +13,10 @@ the columns Value, Service, DataPlan, Description, Validity, Portal Owners,
 Resellers, Agents, Free Users, Status. This module reads it, keeps the active
 plans at the owner tier (the tier our API key is on) and caches the result.
 
-`catalogue.py` (the bundled snapshot) is only a fallback for the case where the
-page cannot be reached, so a provider outage never empties the app's catalogue.
+There is no bundled plan table. The last good read is stored in Firestore
+(`catalogue/data-plans`) and served only while the provider page is briefly
+unreachable, so the catalogue is always something VTU actually published —
+never a list shipped inside this code.
 """
 
 from __future__ import annotations
@@ -36,7 +38,13 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
 
-NETWORK_ORDER = ["mtn", "airtel", "glo", "9mobile"]
+# Display order and names only; the plans themselves come from the provider.
+NETWORK_LABELS = {
+    "mtn": "MTN",
+    "airtel": "Airtel",
+    "glo": "Glo",
+    "9mobile": "9mobile",
+}
 CATEGORY_RANK = {"SME": 0, "Gifting": 1, "Awoof": 2, "Corporate": 3, "Other": 4}
 
 _TABLE = re.compile(r"<table.*?</table>", re.S | re.I)
@@ -165,44 +173,83 @@ def _fetch_live() -> dict[str, list[dict]] | None:
     return parsed
 
 
-def _snapshot() -> dict[str, list[dict]]:
-    from .catalogue import CATALOGUE
+def _read_persisted() -> dict[str, list[dict]] | None:
+    """The last plan table this service successfully read from VTU."""
+    try:
+        from firebase_admin import firestore
 
-    return {
-        network: [dict(plan) for plan in entry["plans"]]
-        for network, entry in CATALOGUE.items()
-    }
+        from .firebase import ensure_app
+
+        ensure_app()
+        snapshot = firestore.client().collection("catalogue").document("data-plans").get()
+        if not snapshot.exists:
+            return None
+        stored = (snapshot.to_dict() or {}).get("plans")
+        if isinstance(stored, dict) and stored:
+            return stored
+    except Exception as error:
+        print(f"plan cache read skipped: {error}")
+    return None
+
+
+def _persist(plans: dict[str, list[dict]]) -> None:
+    try:
+        from firebase_admin import firestore
+
+        from .firebase import ensure_app
+
+        ensure_app()
+        firestore.client().collection("catalogue").document("data-plans").set(
+            {"plans": plans, "savedAt": firestore.SERVER_TIMESTAMP}
+        )
+    except Exception as error:
+        print(f"plan cache write skipped: {error}")
 
 
 def plans() -> tuple[dict[str, list[dict]], str]:
-    """Returns ({network: [plan]}, source) where source is provider or snapshot."""
+    """Returns ({network: [plan]}, source) where source is provider or cache."""
     cached = _cache["plans"]
     if cached is not None and time.monotonic() < _cache["expires"]:
         return cached, _cache["source"]
 
     live = _fetch_live()
     if live:
+        _persist(live)
         with _lock:
             _cache.update(
                 plans=live, source="provider", expires=time.monotonic() + CACHE_SECONDS
             )
         return live, "provider"
 
-    if cached is not None:
-        # Keep serving the last good catalogue rather than an empty one.
-        return cached, _cache["source"]
+    persisted = _read_persisted()
+    if persisted:
+        with _lock:
+            _cache.update(
+                plans=persisted,
+                source="cache",
+                expires=time.monotonic() + CACHE_SECONDS,
+            )
+        return persisted, "cache"
 
-    snapshot = _snapshot()
-    with _lock:
-        _cache.update(
-            plans=snapshot, source="snapshot", expires=time.monotonic() + CACHE_SECONDS
-        )
-    return snapshot, "snapshot"
+    return {}, "unavailable"
 
 
 def plans_for(network: str) -> list[dict] | None:
     catalogue, _ = plans()
     return catalogue.get(str(network or "").lower())
+
+
+def networks() -> list[dict]:
+    """Networks that currently have plans, for the app's network chips."""
+    catalogue, _ = plans()
+    rows = []
+    for network_id in NETWORK_LABELS:
+        if catalogue.get(network_id):
+            rows.append({"id": network_id, "label": NETWORK_LABELS[network_id]})
+    for network_id in catalogue:
+        if network_id not in NETWORK_LABELS:
+            rows.append({"id": network_id, "label": network_id.upper()})
+    return rows
 
 
 def plan(service: str, code: str) -> dict | None:
@@ -214,16 +261,6 @@ def plan(service: str, code: str) -> dict | None:
 
     catalogue, _ = plans()
     for network_plans in catalogue.values():
-        for entry in network_plans:
-            if (
-                str(entry.get("service", "")).lower() == wanted_service
-                and str(entry.get("code", "")).lower() == wanted_code
-            ):
-                return entry
-
-    # Last resort: the bundled snapshot, in case the live table dropped a plan
-    # the provider still accepts.
-    for network_plans in _snapshot().values():
         for entry in network_plans:
             if (
                 str(entry.get("service", "")).lower() == wanted_service
