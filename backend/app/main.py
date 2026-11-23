@@ -119,13 +119,21 @@ def require_user(authorization: str | None) -> dict:
     token = header[7:].strip() if header.startswith("Bearer ") else ""
     if not token:
         return {"error": "missing-token"}
-    try:
-        from firebase_admin import auth as firebase_auth
+    from firebase_admin import auth as firebase_auth
 
+    # Initialising is kept separate from verifying: a missing or unreadable
+    # service-account file is a server setup problem (503), not a bad token
+    # (401), and reporting it as a bad token sent everyone looking in the app.
+    try:
         firebase.ensure_app()
-        return firebase_auth.verify_id_token(token, check_revoked=False)
     except FirebaseUnavailable:
         return {"error": "no-credentials"}
+    except Exception as error:
+        logger.warning("Firebase credentials unusable: %s", type(error).__name__)
+        return {"error": "credentials-unusable"}
+
+    try:
+        return firebase_auth.verify_id_token(token, check_revoked=False)
     except Exception as error:  # expired, revoked, wrong project, ...
         logger.warning("Firebase ID token verification failed: %s", type(error).__name__)
         return {"error": "invalid-token"}
@@ -133,14 +141,16 @@ def require_user(authorization: str | None) -> dict:
 
 def auth_failure(user: dict, action: str) -> JSONResponse:
     error = user.get("error")
-    if error == "no-credentials":
+    if error in ("no-credentials", "credentials-unusable"):
         return send_json(
             503,
             {
                 "ok": False,
                 "message": (
-                    "This server has no Firebase Admin credentials, so it cannot "
-                    "check sign-ins. Set FIREBASE_SERVICE_ACCOUNT on Render and redeploy."
+                    "The server cannot load its Firebase Admin credentials, so it "
+                    "cannot check sign-ins. Upload the service-account JSON as a "
+                    "Render Secret File named firebase-service-account.json, or set "
+                    "FIREBASE_SERVICE_ACCOUNT to the JSON itself."
                 ),
             },
         )
