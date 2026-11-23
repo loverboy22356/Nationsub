@@ -34,7 +34,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import firebase, flutterwave, pricing, provider_catalogue, purchases, vtu, wallet
+from . import (
+    firebase,
+    flutterwave,
+    pricing,
+    provider_catalogue,
+    provider_services,
+    purchases,
+    vtu,
+    wallet,
+)
 from .catalogue import CATALOGUE
 from .firebase import FirebaseUnavailable
 
@@ -666,6 +675,53 @@ def flutterwave_webhook(
     return send_json(
         200,
         {"status": "ok", "credited": result.get("credited"), "balance": result.get("balance")},
+    )
+
+
+@app.get("/providers")
+def providers(service: str | None = None):
+    """Electricity billers, cable providers and banks, straight from source.
+
+    The app asks here instead of carrying its own copy of these lists, so a
+    provider the gateway stops selling disappears from the app by itself.
+    """
+    kind = (service or "").strip().lower()
+
+    if kind in ("electricity", "electric", "bill", "bills"):
+        rows, source = provider_services.electricity_providers()
+        if not rows:
+            return send_json(
+                502,
+                {"ok": False, "message": "VTU's biller list could not be read right now."},
+            )
+        return send_json(
+            200,
+            {"ok": True, "service": "electricity", "source": source, "providers": rows},
+        )
+
+    if kind in ("cable", "tv"):
+        rows, source = provider_services.cable_providers()
+        if not rows:
+            return send_json(
+                502,
+                {"ok": False, "message": "No cable provider is returning packages right now."},
+            )
+        return send_json(
+            200, {"ok": True, "service": "cable", "source": source, "providers": rows}
+        )
+
+    if kind in ("bank", "banks"):
+        rows, source = provider_services.banks()
+        if not rows:
+            return send_json(
+                502, {"ok": False, "message": "The bank list could not be loaded right now."}
+            )
+        return send_json(
+            200, {"ok": True, "service": "bank", "source": source, "banks": rows}
+        )
+
+    return send_json(
+        400, {"ok": False, "message": "Unknown provider list. Use electricity, cable or bank."}
     )
 
 

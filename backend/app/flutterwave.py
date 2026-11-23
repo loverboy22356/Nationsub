@@ -200,6 +200,23 @@ def create_transfer(
     }
 
 
+def list_banks(country: str = "NG") -> list[dict]:
+    """The bank codes Flutterwave resolves and pays against."""
+    if not is_configured():
+        return []
+    _, payload = _request("GET", f"/banks/{country}")
+    data = payload.get("data") or []
+    banks = []
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if code and name:
+            banks.append({"code": code, "name": name})
+    return banks
+
+
 def verify_webhook_hash(header) -> bool:
     """Flutterwave sends the configured secret hash in `verif-hash`."""
     expected = os.environ.get("FLW_SECRET_HASH") or ""

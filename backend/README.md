@@ -11,6 +11,9 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
 | GET | `/health` | liveness probe used by Render |
 | GET | `/plans?network=mtn` | data catalogue with the service charge |
 | GET | `/cable-plans?provider=dstv` | cable packages with the service charge |
+| GET | `/providers?service=electricity` | billers from VTU's published table |
+| GET | `/providers?service=cable` | providers VTU actually returns packages for |
+| GET | `/providers?service=bank` | Flutterwave's live bank list |
 | ANY | `/vtu/<service>` | authenticated proxy to VTU Africa |
 | GET | `/wallet` | balance and recent entries |
 | POST | `/wallet/topup` | Flutterwave virtual account for a top-up |
@@ -28,6 +31,14 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
   code 102 for data, while cable TV works), which is why the table is read
   from the page VTU maintains for developers.
 - **Cable TV** — read live from `index.php?serviceName=CableTV&service=...`.
+  `/providers?service=cable` lists only the providers that endpoint really
+  returns packages for (currently DStv and GOtv; VTU answers `102` for the
+  other names it documents), so a provider it stops selling disappears.
+- **Electricity billers** — parsed from VTU's published biller table
+  (`api/electricity.php`: Company, Service Code, Minimum Amount). There is no
+  JSON endpoint; `index.php?serviceName=Electricity` answers HTTP 500.
+- **Banks** — Flutterwave's `/banks/NG`, i.e. the same codes transfers are
+  resolved and paid against.
 - **Service charges** — `app/pricing.py`. The app never sends a price.
 - **Fallback** — if the table cannot be fetched, `app/catalogue_data.py`
   (a snapshot generated from the Firebase catalogue) keeps the app working.
