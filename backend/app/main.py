@@ -411,6 +411,144 @@ def create_topup(
         return send_json(502, {"ok": False, "message": str(error)})
 
 
+PERMANENT_PREFIX = "nationsub-acct-"
+
+
+def permanent_tx_ref(uid: str) -> str:
+    """Reference carried by every transfer into a customer's own account."""
+    return f"{PERMANENT_PREFIX}{uid}"
+
+
+def _account_json(record: dict) -> dict:
+    return {
+        "accountNumber": str(record.get("accountNumber") or ""),
+        "bankName": str(record.get("bankName") or ""),
+        "accountName": str(record.get("accountName") or ""),
+        "txRef": str(record.get("txRef") or ""),
+    }
+
+
+@app.get("/wallet/account")
+def read_account(authorization: str | None = Header(default=None)):
+    """The customer's own permanent transfer account, if one has been issued."""
+    user = require_user(authorization)
+    if user.get("error"):
+        return auth_failure(user, "Sign in before requesting your account number.")
+
+    try:
+        record = wallet.get_account(user["uid"])
+    except FirebaseUnavailable:
+        return send_json(
+            503,
+            {
+                "ok": False,
+                "message": (
+                    "This server has no Firebase Admin credentials, so it cannot "
+                    "look up your account number."
+                ),
+            },
+        )
+    except Exception as error:
+        logger.warning("account read failed: %s", error)
+        return send_json(
+            502,
+            {"ok": False, "message": f"Your account number could not be loaded: {error}"},
+        )
+
+    return send_json(200, {"ok": True, "account": _account_json(record) if record else None})
+
+
+@app.post("/wallet/account")
+def create_account(
+    payload: dict | None = Body(default=None),
+    authorization: str | None = Header(default=None),
+):
+    """Issues the customer's own permanent account through Flutterwave.
+
+    A static NGN account is registered to a real person, so Flutterwave requires
+    the customer's BVN (or NIN). That is why the app asks once, and why the name
+    a sender sees when their bank resolves the account is the customer's own
+    name. The BVN is forwarded to Flutterwave and never stored by this service.
+    """
+    user = require_user(authorization)
+    if user.get("error"):
+        return auth_failure(user, "Sign in before creating your account number.")
+
+    uid = user["uid"]
+    try:
+        existing = wallet.get_account(uid)
+    except Exception:
+        existing = None
+    if existing and existing.get("accountNumber"):
+        return send_json(
+            200, {"ok": True, "account": _account_json(existing), "created": False}
+        )
+
+    body = payload or {}
+    bvn = re.sub(r"\D", "", str(body.get("bvn") or ""))
+    if len(bvn) != 11:
+        return send_json(400, {"ok": False, "message": "Enter your 11-digit BVN."})
+
+    name = str(body.get("name") or user.get("name") or "").strip()
+    if len(name) < 3:
+        return send_json(
+            400,
+            {"ok": False, "message": "Enter the full name on your bank account."},
+        )
+
+    if not flutterwave.is_configured():
+        return send_json(
+            503,
+            {
+                "ok": False,
+                "message": "Account numbers need FLW_SECRET_KEY on the backend.",
+            },
+        )
+
+    email = user.get("email") or os.environ.get("NATIONSB_DEV_EMAIL") or "funding@nationsub.app"
+    tx_ref = permanent_tx_ref(uid)
+
+    try:
+        account = flutterwave.create_permanent_account(
+            email=email,
+            name=name,
+            bvn=bvn,
+            tx_ref=tx_ref,
+            phone=str(body.get("phone") or ""),
+        )
+        record = {**account, "name": name, "txRef": tx_ref, "email": email}
+        wallet.save_account(uid, record)
+        return send_json(
+            200,
+            {
+                "ok": True,
+                "created": True,
+                "account": _account_json(record),
+                "note": (
+                    "Transfers to this account number credit your wallet "
+                    f"automatically (₦{int(pricing.FUNDING_FEE):,} funding charge)."
+                ),
+            },
+        )
+    except flutterwave.FlutterwaveError as error:
+        status = 503 if error.code == "unconfigured" else 502
+        return send_json(status, {"ok": False, "message": str(error)})
+    except FirebaseUnavailable:
+        return send_json(
+            503,
+            {
+                "ok": False,
+                "message": (
+                    "The account was created but could not be saved: this server "
+                    "has no Firebase Admin credentials."
+                ),
+            },
+        )
+    except Exception as error:
+        logger.warning("account creation failed: %s", error)
+        return send_json(502, {"ok": False, "message": str(error)})
+
+
 @app.get("/transfer/quote")
 def transfer_quote(
     amount: str | None = None,
@@ -632,6 +770,23 @@ def flutterwave_webhook(
         return send_json(200, {"status": "ignored"})
 
     topup = wallet.get_topup(tx_ref)
+    if not topup and tx_ref.startswith(PERMANENT_PREFIX):
+        # Money sent to a customer's own permanent account. There is no top-up
+        # record per transfer, so the wallet is found from the reference.
+        try:
+            account = wallet.get_account(tx_ref[len(PERMANENT_PREFIX):])
+        except Exception as error:
+            logger.warning("flutterwave webhook: account lookup failed: %s", error)
+            account = None
+        if not account or not account.get("uid"):
+            logger.warning("flutterwave webhook: unknown account reference %s", tx_ref)
+            return send_json(200, {"status": "unknown-reference"})
+        topup = {
+            "uid": account.get("uid"),
+            "fee": pricing.FUNDING_FEE,
+            "accountNumber": account.get("accountNumber"),
+            "permanent": True,
+        }
     if not topup:
         logger.warning("flutterwave webhook: unknown reference %s", tx_ref)
         return send_json(200, {"status": "unknown-reference"})
@@ -661,10 +816,16 @@ def flutterwave_webhook(
     if credit_amount <= 0:
         return send_json(200, {"status": "ignored-amount"})
 
+    reference = f"flw-{data.get('id') or data.get('flw_ref') or ''}"
+    if reference == "flw-":
+        # A permanent account is credited many times under one tx_ref, so a
+        # transfer without a provider id still needs its own ledger key.
+        reference = f"{tx_ref}-{int(time.time() * 1000)}"
+
     result = wallet.credit(
         topup.get("uid"),
         credit_amount,
-        reference=f"flw-{data.get('id') or tx_ref}",
+        reference=reference,
         description="Wallet top-up",
         tx_ref=tx_ref,
         flw_ref=str(data.get("flw_ref") or topup.get("flwRef") or ""),

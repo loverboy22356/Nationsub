@@ -105,6 +105,60 @@ def create_virtual_account(
     }
 
 
+def _split_name(name: str) -> tuple[str, str]:
+    parts = [part for part in str(name or "").strip().split() if part]
+    if not parts:
+        return "Nation", "Sub"
+    if len(parts) == 1:
+        return parts[0], parts[0]
+    return parts[0], " ".join(parts[1:])
+
+
+def create_permanent_account(
+    email: str, name: str, bvn: str, tx_ref: str, phone: str = ""
+) -> dict:
+    """Issues the customer's own permanent NGN transfer account.
+
+    Flutterwave calls this a *static* virtual account: it never expires, and it
+    is registered to a real person, which is why a sender's bank resolves the
+    account to the customer's own name instead of the business name. That
+    registration is also why Flutterwave requires the customer's BVN (or NIN) --
+    there is no way to open a named account without it.
+
+    No `amount` is sent: an amount would turn it into a single-use dynamic
+    account. The BVN is forwarded to Flutterwave and never stored here.
+    """
+    first, last = _split_name(name)
+    body = {
+        "email": email,
+        "currency": "NGN",
+        "is_permanent": True,
+        "tx_ref": tx_ref,
+        "firstname": first,
+        "lastname": last,
+        "narration": (str(name or "").strip() or f"{first} {last}".strip())[:100],
+        "bvn": str(bvn).strip(),
+    }
+    if phone:
+        body["phonenumber"] = phone
+
+    status, payload = _request("POST", "/virtual-account-numbers", body)
+    data = payload.get("data") or {}
+    if payload.get("status") != "success" or not (
+        isinstance(data, dict) and data.get("account_number")
+    ):
+        raise FlutterwaveError(_failure_message(status, payload))
+    return {
+        "accountNumber": str(data.get("account_number")),
+        "bankName": str(data.get("bank_name") or "Flutterwave MFB"),
+        "accountName": str(
+            data.get("narration") or str(name or "").strip() or f"{first} {last}".strip()
+        ),
+        "flwRef": str(data.get("flw_ref") or ""),
+        "orderRef": str(data.get("order_ref") or ""),
+    }
+
+
 def verify_transaction(transaction_id) -> dict | None:
     """Server-side re-check so a forged webhook body cannot mint wallet credit."""
     if not is_configured():

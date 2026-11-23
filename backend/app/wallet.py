@@ -65,6 +65,7 @@ def _read_ledger() -> dict:
         "wallets": parsed.get("wallets") or {},
         "entries": parsed.get("entries") or {},
         "topups": parsed.get("topups") or {},
+        "accounts": parsed.get("accounts") or {},
     }
 
 
@@ -135,6 +136,36 @@ def get_topup(tx_ref: str) -> dict | None:
     if not snapshot.exists:
         return None
     return {"txRef": tx_ref, **(snapshot.to_dict() or {})}
+
+
+def save_account(uid: str, record: dict) -> None:
+    """Stores the customer's own permanent transfer account (wallets read it)."""
+    payload = {**record, "uid": uid, "currency": CURRENCY}
+    if file_store_enabled():
+        with _LEDGER_LOCK:
+            data = _read_ledger()
+            accounts = data.get("accounts") or {}
+            accounts[uid] = {**payload, "createdAt": _now()}
+            data["accounts"] = accounts
+            _write_ledger(data)
+        return
+    _store().collection("accounts").document(uid).set(
+        {**payload, "createdAt": _timestamp()}
+    )
+
+
+def get_account(uid: str) -> dict | None:
+    """The permanent account issued for [uid], or None if there is none yet."""
+    if not uid:
+        return None
+    if file_store_enabled():
+        return ((
+            _read_ledger().get("accounts") or {}
+        ).get(uid))
+    snapshot = _store().collection("accounts").document(uid).get()
+    if not snapshot.exists:
+        return None
+    return {"uid": uid, **(snapshot.to_dict() or {})}
 
 
 def balance(uid: str) -> float:
