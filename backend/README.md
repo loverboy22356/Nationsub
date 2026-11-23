@@ -76,6 +76,10 @@ directory, or the build fails looking for `requirements.txt`:
 With the root directory empty, the repository's own `requirements.txt` pulls in
 `backend/requirements.txt` and the root `main.py` re-exports the app.
 
+Leaving the Start Command at Render's default (`gunicorn your_application.wsgi`)
+also works: the repo's `your_application.py` exposes a WSGI wrapper around the
+ASGI app, and `gunicorn` + `a2wsgi` are installed from the requirements.
+
 ### Environment variables
 
 | Key | Value |
