@@ -62,10 +62,19 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
 ### Option B — manual
 
 - **New** → **Web Service** → the repository.
-- Language: **Python 3**, root directory: `backend`.
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Language: **Python 3**.
 - Health check path: `/health`
+
+Then pick one of these two layouts — the start command must match the root
+directory, or the build fails looking for `requirements.txt`:
+
+| Root Directory | Build command | Start command |
+| --- | --- | --- |
+| `backend` | `pip install -r requirements.txt` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| *(empty — repo root)* | `pip install -r requirements.txt` | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+
+With the root directory empty, the repository's own `requirements.txt` pulls in
+`backend/requirements.txt` and the root `main.py` re-exports the app.
 
 ### Environment variables
 
