@@ -34,8 +34,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import firebase, flutterwave, pricing, purchases, vtu, wallet
-from .catalogue import CATALOGUE, network_ids, plans_for
+from . import firebase, flutterwave, pricing, provider_catalogue, purchases, vtu, wallet
+from .catalogue import CATALOGUE
 from .firebase import FirebaseUnavailable
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -693,9 +693,13 @@ def cable_plans(provider: str | None = None):
 
 @app.get("/plans")
 def plans(network: str | None = None):
+    # Read from VTU's published plan table (cached for a few minutes), not from
+    # a baked-in list: the snapshot is only used when the table is unreachable.
+    catalogue, source = provider_catalogue.plans()
+
     if network:
         network_id = network.lower()
-        network_plans = plans_for(network_id)
+        network_plans = catalogue.get(network_id)
         if network_plans is None:
             return send_json(404, {"ok": False, "message": f'Unknown network "{network_id}".'})
         return send_json(
@@ -703,22 +707,23 @@ def plans(network: str | None = None):
             {
                 "ok": True,
                 "network": network_id,
-                "source": "backend",
+                "source": source,
                 "plans": vtu.with_customer_prices("data", network_plans),
             },
         )
+
     return send_json(
         200,
         {
             "ok": True,
-            "source": "backend",
+            "source": source,
             "networks": [
                 {
                     "id": network_id,
-                    "label": CATALOGUE[network_id]["label"],
-                    "plans": vtu.with_customer_prices("data", plans_for(network_id) or []),
+                    "label": CATALOGUE.get(network_id, {}).get("label") or network_id.upper(),
+                    "plans": vtu.with_customer_prices("data", network_plans),
                 }
-                for network_id in network_ids()
+                for network_id, network_plans in catalogue.items()
             ],
         },
     )
@@ -744,7 +749,13 @@ def _handle_vtu(service: str, params: dict, body: dict, authorization: str | Non
         catalogue = vtu.fetch_cable_plans(str(merged.get("service") or "").lower())
         cable_plan_list = catalogue.get("plans") or []
 
-    purchase = purchases.describe(service, merged, cable_plan_list)
+    # Data bundles are priced from the provider's own plan table, so a plan the
+    # app names is checked against what VTU actually sells before any charge.
+    data_plan = None
+    if service == "data":
+        data_plan = provider_catalogue.plan(merged.get("service"), merged.get("DataPlan"))
+
+    purchase = purchases.describe(service, merged, cable_plan_list, data_plan)
     if purchase.get("error"):
         return send_json(
             400,

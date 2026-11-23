@@ -1,9 +1,11 @@
-"""Data bundle catalogue served to the app.
+"""Bundled snapshot of the data bundle catalogue.
 
-VTU exposes no plan-listing endpoint, so the catalogue is owned here. The plan
-rows live in catalogue_data.py, which tools/sync_catalogue.js regenerates from
-the Firebase function's functions/catalogue.js so both backends quote the same
-prices.
+Plans are normally read live from VTU's published price table by
+provider_catalogue.py. This snapshot is the fallback for the minutes when that
+page cannot be reached, so the app still shows a catalogue instead of an error.
+
+The rows live in catalogue_data.py, which tools/sync_catalogue.js regenerates
+from the Firebase function's functions/catalogue.js so both backends agree.
 
 Update prices there, run `node tools/sync_catalogue.js`, then redeploy.
 """

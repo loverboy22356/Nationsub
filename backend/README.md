@@ -19,12 +19,22 @@ never picks a price and never sees `VTU_API_KEY` or `FLW_SECRET_KEY`.
 | POST | `/transfer` | pay a bank account through Flutterwave |
 | POST | `/webhook/flutterwave` | funding + payout notifications |
 
-Fees live in `app/pricing.py`, plan prices in `app/catalogue_data.py`.
-Regenerate the catalogue after changing the Firebase function's catalogue:
+## Where prices come from
 
-```bash
-node tools/sync_catalogue.js
-```
+- **Data bundles** — read live from VTU's published price table
+  (`www.vtuafrica.com.ng/api/data.php`): plan code, size, validity, owner-tier
+  price and Active/Disabled status. Cached for 10 minutes. The API itself has
+  no plan-listing endpoint (every `index.php?serviceName=...` lookup answers
+  code 102 for data, while cable TV works), which is why the table is read
+  from the page VTU maintains for developers.
+- **Cable TV** — read live from `index.php?serviceName=CableTV&service=...`.
+- **Service charges** — `app/pricing.py`. The app never sends a price.
+- **Fallback** — if the table cannot be fetched, `app/catalogue_data.py`
+  (a snapshot generated from the Firebase catalogue) keeps the app working.
+  Regenerate it with `node tools/sync_catalogue.js`.
+
+`/plans` reports `source: "provider"` when the prices are live and
+`source: "snapshot"` when the fallback was used.
 
 ## Deploy on Render
 
@@ -54,6 +64,9 @@ node tools/sync_catalogue.js
 | `FIREBASE_SERVICE_ACCOUNT` | the Firebase service-account JSON on one line (Render secret) |
 | `FIREBASE_PROJECT_ID` | `nationsub-84906` |
 | `PYTHON_VERSION` | `3.12.6` |
+
+Optional tuning: `VTU_PLAN_TABLE_URL` (default the VTU price table) and
+`VTU_PLAN_CACHE_SECONDS` (default `600`).
 
 `FIREBASE_SERVICE_ACCOUNT` is used to verify the app's Firebase ID tokens and
 to read/write the Firestore wallet. Alternatively upload the JSON as a Render

@@ -48,11 +48,14 @@ def _positive(value) -> float | None:
     return number
 
 
-def describe(service, params=None, cable_plans=None) -> dict:
+def describe(service, params=None, cable_plans=None, data_plan=None) -> dict:
     """Returns {"skip": True}, {"error": ...} or the priced purchase.
 
     Services such as airtime-to-cash and balance checks do not spend the
     wallet, so they are skipped rather than priced.
+
+    `data_plan` is the live plan row the caller resolved from the provider
+    catalogue; without it the bundled snapshot is used.
     """
     params = params or {}
     fee_key = FEE_KEY.get(str(service or "").lower())
@@ -64,7 +67,7 @@ def describe(service, params=None, cable_plans=None) -> dict:
     size_mb = None
 
     if fee_key == "data":
-        plan = catalogue_plan(params.get("service"), params.get("DataPlan"))
+        plan = data_plan or catalogue_plan(params.get("service"), params.get("DataPlan"))
         if not plan:
             return {"error": "That data plan is not available right now."}
         provider_amount = _positive(plan.get("price"))
