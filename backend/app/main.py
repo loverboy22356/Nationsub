@@ -260,6 +260,7 @@ def health():
         "runtime": "python",
         "provider": "configured" if os.environ.get("VTU_API_KEY") else "missing-key",
         "firebase": "configured" if firebase.has_credentials() else "missing-credentials",
+        "firebaseCheck": firebase.probe(),
         "wallet": "file" if wallet.file_store_enabled() else "firestore",
     }
 

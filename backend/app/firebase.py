@@ -104,6 +104,35 @@ def ensure_app():
         return firebase_admin.initialize_app(credential, {"projectId": project})
 
 
+def probe() -> str:
+    """Diagnostic for /health: can this process actually verify a token?
+
+    "Firebase rejected this ID token" is returned both when the app's token is
+    bad and when the service account itself cannot be loaded, so the two are
+    indistinguishable from the client. A deliberately fake token separates them:
+    with working credentials it fails as InvalidIdTokenError (expected), while a
+    broken service account fails earlier, in initialisation.
+
+    Only exception class names are reported; no key material is exposed.
+    """
+    if not has_credentials():
+        return "missing-credentials"
+    try:
+        ensure_app()
+    except Exception as error:
+        return f"init-failed:{type(error).__name__}"
+    try:
+        from firebase_admin import auth as firebase_auth
+
+        firebase_auth.verify_id_token("probe.invalid.token", check_revoked=False)
+    except Exception as error:
+        name = type(error).__name__
+        if name in ("InvalidIdTokenError", "ExpiredIdTokenError", "RevokedIdTokenError"):
+            return "ok"
+        return f"verify-failed:{name}"
+    return "unexpected"
+
+
 def has_credentials() -> bool:
     return bool(
         (os.environ.get("FIREBASE_SERVICE_ACCOUNT") or "").strip()
